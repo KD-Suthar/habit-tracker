@@ -653,9 +653,11 @@ function habitsOnTrack(md){ return activeHabits().filter(h=>habitFracInMonth(h.i
 function currentStreak(md){
   const monthKey = getMonthKey(md);
   ensureWeightsForMonth(monthKey);
-  const upto = elapsedDates(md);
+  const upto = elapsedDates(md).filter(d => iso(d) !== iso(TODAY)); // today is still in progress — don't let it break the streak early
   let streak=0;
   for(let i=upto.length-1;i>=0;i--){ if(dayProductivity(iso(upto[i]), monthKey)>=PRODUCTIVITY_THRESHOLD) streak++; else break; }
+  // if today has already crossed the goal, it extends the streak immediately
+  if(dayProductivity(iso(TODAY), monthKey) >= PRODUCTIVITY_THRESHOLD) streak++;
   return streak;
 }
 function bestStreak(md){
@@ -770,7 +772,7 @@ function render(){
     <div class="stats-row">
       <div class="stat-card"><div class="label">Monthly completion</div><div class="value">${pct}%</div><div class="sub">${planned} cells tracked</div></div>
       <div class="stat-card"><div class="label">Habits on track</div><div class="value">${onTrack} / ${activeHabits().length}</div><div class="sub">per-habit goal</div></div>
-      <div class="stat-card"><div class="label">Current streak</div><div class="value">${streak} day${streak===1?'':'s'}</div><div class="sub">best: ${best} days</div></div>
+      <div class="stat-card"><div class="label">Current streak</div><div class="value">${streak>0?'🔥 ':''}${streak} day${streak===1?'':'s'}</div><div class="sub">best: ${best} days</div></div>
       <div class="stat-card"><div class="label">Check-ins</div><div class="value">${checked}</div><div class="sub">of ${planned} planned</div></div>
       <div class="stat-card wasted"><div class="label">Days wasted</div><div class="value">${elapsed>0 ? wasted : '—'}</div><div class="sub">${elapsed>0 ? `< ${Math.round(PRODUCTIVITY_THRESHOLD*100)}% · of ${elapsed} elapsed`:'month not started'}</div></div>
     </div>
