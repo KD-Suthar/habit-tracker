@@ -386,7 +386,8 @@ const ALL_YEARS = [...new Set(MONTH_DEFS.map(m=>m.year))];
 const THRESHOLD = 0.8;
 const WASTED_THRESHOLD = 0.3;
 
-const TODAY = new Date(2026,8,18);
+const TODAY = new Date();
+TODAY.setHours(0,0,0,0); // normalize so date comparisons ignore time-of-day
 function iso(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function isToday(d){ return iso(d)===iso(TODAY); }
 function findCurrentMonthIndex(){
