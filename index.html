@@ -239,6 +239,12 @@
     background:transparent; border:1px solid var(--line); color:var(--text-faint);
     border-radius:8px; padding:8px 12px; font-size:12px; cursor:pointer; font-family:inherit;
   }
+  .month-nav{ display:flex; align-items:center; gap:8px; }
+  .month-nav-btn{
+    background:var(--surface-2); border:1px solid var(--line); color:var(--text);
+    border-radius:6px; width:26px; height:26px; font-size:13px; cursor:pointer; line-height:1;
+  }
+  .month-nav-btn:disabled{ opacity:0.3; cursor:default; }
 </style>
 </head>
 <body>
@@ -478,14 +484,14 @@ let showAllTime = false;
 let routineOpen = false;
 let state = {};
 let checkinsLoaded = false;
+let selectorsPopulated = false;
 
 let routineRef, checkinsRef;
 
 function tryInitialRender(){
-  if(habitsLoaded && checkinsLoaded){
-    populateSelectors();
-    render();
-  }
+  if(!habitsLoaded || !checkinsLoaded) return;
+  if(!selectorsPopulated){ populateSelectors(); selectorsPopulated = true; }
+  render();
 }
 
 function attachDataListeners(){
@@ -500,7 +506,7 @@ function attachDataListeners(){
       routineRef.set({habits:HABITS});
     }
     habitsLoaded = true;
-    if(habitsLoaded && checkinsLoaded){ render(); } else { tryInitialRender(); }
+    tryInitialRender();
   }, err=>{
     document.getElementById('app').innerHTML = '<div class="loading">Connection error — check your Firebase config and Firestore rules.<br>('+err.message+')</div>';
   });
@@ -508,7 +514,7 @@ function attachDataListeners(){
   checkinsRef.onSnapshot(snap=>{
     state = (snap.exists && snap.data()) ? snap.data() : {};
     checkinsLoaded = true;
-    if(habitsLoaded && checkinsLoaded){ render(); } else { tryInitialRender(); }
+    tryInitialRender();
   }, err=>{
     document.getElementById('app').innerHTML = '<div class="loading">Connection error — check your Firebase config and Firestore rules.<br>('+err.message+')</div>';
   });
@@ -626,6 +632,16 @@ function populateMonthSelectFor(y){
   const opts = MONTH_DEFS.map((md,i)=> md.year===y ? {i,md} : null).filter(Boolean);
   monthSel.innerHTML = opts.map(o=>`<option value="${o.i}">${MONTH_NAMES[o.md.month-1]}</option>`).join('');
 }
+function stepMonth(dir){
+  const newIndex = selectedIndex + dir;
+  if(newIndex<0 || newIndex>=MONTH_DEFS.length) return;
+  selectedIndex = newIndex;
+  compareIndex = selectedIndex>0 ? selectedIndex-1 : (MONTH_DEFS.length>1?1:-1);
+  document.getElementById('yearSelect').value = MONTH_DEFS[selectedIndex].year;
+  populateMonthSelectFor(MONTH_DEFS[selectedIndex].year);
+  document.getElementById('monthSelect').value = selectedIndex;
+  render();
+}
 window.onYearlyViewChange = function(v){ yearlyViewYear = parseInt(v); render(); };
 window.toggleAllTime = function(){ showAllTime = !showAllTime; render(); };
 
@@ -660,7 +676,11 @@ function render(){
 
     <div class="panel">
       <div class="panel-head">
-        <div class="panel-title">${md.label} — daily consistency</div>
+        <div class="panel-title month-nav">
+          <button class="month-nav-btn" onclick="stepMonth(-1)" ${selectedIndex===0?'disabled':''}>◀</button>
+          <span>${md.label} — daily consistency</span>
+          <button class="month-nav-btn" onclick="stepMonth(1)" ${selectedIndex===MONTH_DEFS.length-1?'disabled':''}>▶</button>
+        </div>
         <div class="panel-note">tap any square</div>
       </div>
       <div class="grid-scroll">
@@ -1019,6 +1039,7 @@ function resetMonth(){
 
 window.toggle = toggle;
 window.jumpToMonth = jumpToMonth;
+window.stepMonth = stepMonth;
 window.resetMonth = resetMonth;
 window.addHabit = addHabit;
 window.updateHabit = updateHabit;
