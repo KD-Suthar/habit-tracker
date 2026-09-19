@@ -648,17 +648,24 @@ function allDatesAllTime(){ return MONTH_DEFS.flatMap(md=>md.dates); }
 function monthChecked(md){ const habits=activeHabits(); let n=0; for(const h of habits) for(const d of md.dates) if(isChecked(h.id, iso(d))) n++; return n; }
 function monthTotal(md){ return activeHabits().length * md.dates.length; }
 function monthFrac(md){ return fracForDates(md.dates); }
-function habitFracInMonth(hid, md){ return habitFracForDates(hid, md.dates); }
+function habitFracInMonth(hid, md){ return habitFracForDates(hid, elapsedDates(md)); }
 function habitsOnTrack(md){ return activeHabits().filter(h=>habitFracInMonth(h.id,md) >= ((h.goal!=null?h.goal:Math.round(THRESHOLD*100))/100)).length; }
 function currentStreak(md){
-  const upto = md.dates.filter(d=>d<=TODAY);
+  const monthKey = getMonthKey(md);
+  ensureWeightsForMonth(monthKey);
+  const upto = elapsedDates(md);
   let streak=0;
-  for(let i=upto.length-1;i>=0;i--){ if(dayFrac(iso(upto[i]))>=THRESHOLD) streak++; else break; }
+  for(let i=upto.length-1;i>=0;i--){ if(dayProductivity(iso(upto[i]), monthKey)>=PRODUCTIVITY_THRESHOLD) streak++; else break; }
   return streak;
 }
 function bestStreak(md){
+  const monthKey = getMonthKey(md);
+  ensureWeightsForMonth(monthKey);
   let best=0,cur=0;
-  for(const d of md.dates){ if(dayFrac(iso(d))>=THRESHOLD){cur++;best=Math.max(best,cur);} else cur=0; }
+  for(const d of md.dates){
+    if(d>TODAY) break;
+    if(dayProductivity(iso(d), monthKey)>=PRODUCTIVITY_THRESHOLD){ cur++; best=Math.max(best,cur); } else cur=0;
+  }
   return best;
 }
 function elapsedDates(md){ return md.dates.filter(d=>d<=TODAY); }
@@ -765,7 +772,7 @@ function render(){
       <div class="stat-card"><div class="label">Habits on track</div><div class="value">${onTrack} / ${activeHabits().length}</div><div class="sub">per-habit goal</div></div>
       <div class="stat-card"><div class="label">Current streak</div><div class="value">${streak} day${streak===1?'':'s'}</div><div class="sub">best: ${best} days</div></div>
       <div class="stat-card"><div class="label">Check-ins</div><div class="value">${checked}</div><div class="sub">of ${planned} planned</div></div>
-      <div class="stat-card wasted"><div class="label">Days wasted</div><div class="value">${elapsed>0 ? wasted : '—'}</div><div class="sub">${elapsed>0 ? `< 60% · of ${elapsed} elapsed`:'month not started'}</div></div>
+      <div class="stat-card wasted"><div class="label">Days wasted</div><div class="value">${elapsed>0 ? wasted : '—'}</div><div class="sub">${elapsed>0 ? `< ${Math.round(PRODUCTIVITY_THRESHOLD*100)}% · of ${elapsed} elapsed`:'month not started'}</div></div>
     </div>
 
     ${showAllTime ? renderAllTimeSummary() : ''}
