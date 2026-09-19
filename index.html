@@ -210,6 +210,25 @@
   }
   .routine-subhead{ font-size:11.5px; color:var(--text-faint); font-weight:700; text-transform:uppercase; letter-spacing:0.03em; margin:16px 0 6px; }
 
+  /* productivity weights */
+  .prod-row{
+    display:flex; align-items:center; gap:12px; padding:9px 2px;
+    border-bottom:1px solid var(--line);
+  }
+  .prod-row:last-child{ border-bottom:none; }
+  .prod-row .prod-name{ flex:1; font-size:13.5px; color:var(--text); }
+  .prod-row .prod-name.zero{ color:var(--text-faint); }
+  .prod-badge{
+    font-size:10px; background:var(--surface-2); color:var(--text-faint);
+    border-radius:4px; padding:2px 6px; margin-left:6px;
+  }
+  .prod-weight-input{
+    width:56px; background:var(--surface-2); border:1px solid var(--line); border-radius:6px;
+    color:var(--text); font-size:13px; padding:6px; text-align:center; font-family:inherit;
+  }
+  .prod-total{ font-size:12px; color:var(--text-dim); margin-top:12px; }
+  .prod-total b{ color:var(--text); }
+
   /* controls row above stats */
   .controls-row{ display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px; }
   .loading{ color:var(--text-faint); text-align:center; padding:60px 0; }
@@ -467,7 +486,29 @@ for(let y=2028; y<=2037; y++){
 const ALL_YEARS = [...new Set(MONTH_DEFS.map(m=>m.year))];
 
 const THRESHOLD = 0.8;
-const WASTED_THRESHOLD = 0.3;
+const WASTED_THRESHOLD = 0.3; // legacy, no longer used for wasted-day calc, kept for reference
+const PRODUCTIVITY_THRESHOLD = 0.6; // your 60% productivity goal — below this, a day is "wasted"
+
+// Default weight-by-name seed, used only the first time a month is opened.
+// Order reflects priority: earlier = higher weight. Anything unmatched falls to 1%.
+const DEFAULT_WEIGHT_RULES = [
+  { match:'wake up', weight:20 },
+  { match:'gym', weight:18 },
+  { match:'learning', weight:16 },
+  { match:'work', weight:14 },
+  { match:'walk', weight:12 },
+  { match:'screens off', weight:10 },
+  { match:'reading', weight:8 },
+];
+function defaultWeightsFor(habits){
+  const w = {};
+  for(const h of habits){
+    const key = (h.name||'').trim().toLowerCase();
+    const rule = DEFAULT_WEIGHT_RULES.find(r => key.includes(r.match));
+    w[h.id] = rule ? rule.weight : 1;
+  }
+  return w;
+}
 
 const TODAY = new Date();
 TODAY.setHours(0,0,0,0); // normalize so date comparisons ignore time-of-day
@@ -482,14 +523,17 @@ let compareIndex = selectedIndex>0 ? selectedIndex-1 : -1;
 let yearlyViewYear = TODAY.getFullYear();
 let showAllTime = false;
 let routineOpen = false;
+let productivityOpen = false;
 let state = {};
 let checkinsLoaded = false;
 let selectorsPopulated = false;
+let productivityWeights = {}; // { "2026-09": { habitId: weightPercent, ... }, ... }
+let productivityLoaded = false;
 
-let routineRef, checkinsRef;
+let routineRef, checkinsRef, productivityRef;
 
 function tryInitialRender(){
-  if(!habitsLoaded || !checkinsLoaded) return;
+  if(!habitsLoaded || !checkinsLoaded || !productivityLoaded) return;
   if(!selectorsPopulated){ populateSelectors(); selectorsPopulated = true; }
   render();
 }
@@ -497,6 +541,7 @@ function tryInitialRender(){
 function attachDataListeners(){
   routineRef = db.collection('habitApp').doc('routine');
   checkinsRef = db.collection('habitApp').doc('checkins');
+  productivityRef = db.collection('habitApp').doc('productivity');
 
   routineRef.onSnapshot(snap=>{
     if(snap.exists && snap.data().habits && snap.data().habits.length){
@@ -518,6 +563,48 @@ function attachDataListeners(){
   }, err=>{
     document.getElementById('app').innerHTML = '<div class="loading">Connection error — check your Firebase config and Firestore rules.<br>('+err.message+')</div>';
   });
+
+  productivityRef.onSnapshot(snap=>{
+    productivityWeights = (snap.exists && snap.data()) ? snap.data() : {};
+    productivityLoaded = true;
+    tryInitialRender();
+  }, err=>{
+    document.getElementById('app').innerHTML = '<div class="loading">Connection error — check your Firebase config and Firestore rules.<br>('+err.message+')</div>';
+  });
+}
+
+function saveProductivityWeights(){ if(productivityRef) productivityRef.set(productivityWeights).catch(e=>console.error('save weights failed:', e)); }
+function getMonthKey(md){ return md.year+'-'+String(md.month).padStart(2,'0'); }
+function ensureWeightsForMonth(monthKey){
+  if(!productivityWeights[monthKey]){
+    productivityWeights[monthKey] = defaultWeightsFor(activeHabits());
+    saveProductivityWeights();
+    return;
+  }
+  // fill in newly-added habits as 0 (not counted) without touching existing entries
+  const w = productivityWeights[monthKey];
+  let changed = false;
+  for(const h of activeHabits()){
+    if(!(h.id in w)){ w[h.id] = 0; changed = true; }
+  }
+  if(changed) saveProductivityWeights();
+}
+function weightFor(monthKey, habitId){
+  const w = productivityWeights[monthKey];
+  return (w && w[habitId] != null) ? w[habitId] : 0;
+}
+function setWeight(monthKey, habitId, value){
+  if(!productivityWeights[monthKey]) productivityWeights[monthKey] = {};
+  productivityWeights[monthKey][habitId] = Math.max(0, Math.min(100, parseInt(value)||0));
+  saveProductivityWeights();
+  render();
+}
+function dayProductivity(di, monthKey){
+  let score = 0;
+  for(const h of activeHabits()){
+    if(isChecked(h.id, di)) score += weightFor(monthKey, h.id);
+  }
+  return Math.min(score,100)/100;
 }
 
 function save(){ if(checkinsRef) checkinsRef.set(state).catch(e=>console.error('save failed:', e)); }
@@ -575,7 +662,16 @@ function bestStreak(md){
   return best;
 }
 function elapsedDates(md){ return md.dates.filter(d=>d<=TODAY); }
-function wastedDaysInMonth(md){ return wastedCountForDates(md.dates); }
+function wastedDaysInMonth(md){
+  const monthKey = getMonthKey(md);
+  ensureWeightsForMonth(monthKey);
+  return elapsedDates(md).filter(d => dayProductivity(iso(d), monthKey) < PRODUCTIVITY_THRESHOLD).length;
+}
+function wastedCountAcrossMonths(monthDefsList){
+  let total = 0;
+  for(const md of monthDefsList) total += wastedDaysInMonth(md);
+  return total;
+}
 function perfectDaysInMonth(md){ return perfectCountForDates(md.dates); }
 function categoryFracInMonth(cat, md){ return categoryFracForDates(cat, md.dates); }
 function weeklyTrend(md){
@@ -588,7 +684,7 @@ function weeklyTrend(md){
 }
 function yearWastedReportGeneric(year){
   const months = MONTH_DEFS.filter(md=>md.year===year && elapsedCountForDates(md.dates)>0);
-  const rows = months.map(md=>({ label: MONTH_NAMES[md.month-1], wasted: wastedCountForDates(md.dates) }));
+  const rows = months.map(md=>({ label: MONTH_NAMES[md.month-1], wasted: wastedDaysInMonth(md) }));
   const total = rows.reduce((s,r)=>s+r.wasted,0);
   return { rows, total };
 }
@@ -685,7 +781,7 @@ function render(){
       </div>
       <div class="grid-scroll">
         <table class="heatmap">
-          <tr><th></th>${md.dates.map(d=>`<th>${d.getDate()}${(d<=TODAY && dayFrac(iso(d))<WASTED_THRESHOLD)?'<div class="day-dot-wasted"></div>':''}</th>`).join('')}</tr>
+          <tr><th></th>${md.dates.map(d=>`<th>${d.getDate()}${(d<=TODAY && dayProductivity(iso(d),getMonthKey(md))<PRODUCTIVITY_THRESHOLD)?'<div class="day-dot-wasted"></div>':''}</th>`).join('')}</tr>
           ${activeHabits().map(h=>`
             <tr>
               <td class="rowlabel">${escapeHtml(h.name)}</td>
@@ -714,6 +810,8 @@ function render(){
     ${renderYearlyInsights()}
 
     ${renderRoutinePanel()}
+
+    ${renderProductivityPanel()}
   `;
 }
 
@@ -770,6 +868,37 @@ function renderRoutinePanel(){
         <select id="newHabitCat">${CATS.map(c=>`<option value="${c}">${c}</option>`).join('')}</select>
         <button class="add-btn" onclick="addHabitFromForm()">Add</button>
       </div>
+    </div>
+  </details>`;
+}
+
+function renderProductivityPanel(){
+  const md = MONTH_DEFS[selectedIndex];
+  const monthKey = getMonthKey(md);
+  ensureWeightsForMonth(monthKey);
+  const active = activeHabits();
+  const total = active.reduce((s,h)=>s+weightFor(monthKey,h.id),0);
+
+  const rows = active.map(h=>{
+    const w = weightFor(monthKey, h.id);
+    return `
+    <div class="prod-row">
+      <div class="prod-name ${w===0?'zero':''}">${escapeHtml(h.name)}${w===0?'<span class="prod-badge">not counted</span>':''}</div>
+      <input type="number" min="0" max="100" class="prod-weight-input" value="${w}"
+        onchange="setWeight('${monthKey}','${h.id}',this.value)">%
+    </div>`;
+  }).join('');
+
+  return `
+  <details class="routine-details" ${productivityOpen?'open':''} ontoggle="productivityOpen=this.open">
+    <summary class="routine-summary"><span>📈 Manage Productivity — ${md.label}</span><span class="arrow">▶</span></summary>
+    <div class="routine-body">
+      <div class="panel-note" style="margin-bottom:10px;">
+        Each habit's weight is how many points it contributes toward a productive day. Goal: <b>${Math.round(PRODUCTIVITY_THRESHOLD*100)}%</b> — below that, a day counts as wasted.
+        These weights apply only to <b>${md.label}</b> — other months keep their own settings, and won't be changed by editing this one.
+      </div>
+      ${rows || '<div class="footnote">No active habits to weight.</div>'}
+      <div class="prod-total">Current total if every habit is checked: <b>${Math.min(total,100)}%</b>${total>100?' (capped at 100% per day)':''}</div>
     </div>
   </details>`;
 }
@@ -842,7 +971,7 @@ function renderYearlyInsights(){
   const year = yearlyViewYear;
   const yDates = allDatesForYear(year);
   const catFracs = CATS.map(c=>categoryFracForDates(c, yDates));
-  const wasted = wastedCountForDates(yDates);
+  const wasted = wastedCountAcrossMonths(MONTH_DEFS.filter(md=>md.year===year));
   const elapsed = elapsedCountForDates(yDates);
   const perfect = perfectCountForDates(yDates);
   const overallPct = Math.round(fracForDates(yDates)*100);
@@ -903,7 +1032,7 @@ function renderWastedReport(report){
 function renderAllTimeSummary(){
   const allDates = allDatesAllTime();
   const overallPct = Math.round(fracForDates(allDates)*100);
-  const wasted = wastedCountForDates(allDates);
+  const wasted = wastedCountAcrossMonths(MONTH_DEFS);
   const elapsed = elapsedCountForDates(allDates);
   const perfect = perfectCountForDates(allDates);
   const catFracs = CATS.map(c=>categoryFracForDates(c, allDates));
@@ -964,14 +1093,16 @@ function renderYearGrid(year){
     }
     const {idx, md} = entry;
     const isActive = idx===selectedIndex;
+    const monthKey = getMonthKey(md);
+    ensureWeightsForMonth(monthKey);
     const totalDaysInMonth = daysInMonth(year, md.month);
     const leadingBlank = totalDaysInMonth - md.dates.length;
     const squares = [];
     for(let i=0;i<leadingBlank;i++) squares.push(`<div class="day-sq" style="opacity:0.25"></div>`);
     for(const d of md.dates){
       const f = dayFrac(iso(d));
-      const wasted = d<=TODAY && f<WASTED_THRESHOLD;
-      squares.push(`<div class="day-sq ${wasted?'sq-wasted':''}" style="background:${colorForFrac(f)}" title="${iso(d)}: ${Math.round(f*100)}%${wasted?' (wasted)':''}"></div>`);
+      const wasted = d<=TODAY && dayProductivity(iso(d), monthKey) < PRODUCTIVITY_THRESHOLD;
+      squares.push(`<div class="day-sq ${wasted?'sq-wasted':''}" style="background:${colorForFrac(f)}" title="${iso(d)}: ${Math.round(f*100)}% activity${wasted?' · wasted (productivity <60%)':''}"></div>`);
     }
     return `<div class="month-col ${isActive?'active-month':''}" onclick="jumpToMonth(${idx})">
       <div class="month-col-label">${MONTH_NAMES[md.month-1]}</div>
@@ -1049,6 +1180,7 @@ window.deactivateHabit = deactivateHabit;
 window.reactivateHabit = reactivateHabit;
 window.moveHabit = moveHabit;
 window.addHabitFromForm = addHabitFromForm;
+window.setWeight = setWeight;
 
 // Initial render is triggered by the Firestore onSnapshot listeners above,
 // once both the routine and check-in documents have loaded at least once.
