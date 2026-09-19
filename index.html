@@ -887,6 +887,7 @@ function renderProductivityPanel(){
   ensureWeightsForMonth(monthKey);
   const active = activeHabits();
   const total = active.reduce((s,h)=>s+weightFor(monthKey,h.id),0);
+  const totalColor = total===100 ? 'var(--green)' : 'var(--red)';
 
   const rows = active.map(h=>{
     const w = weightFor(monthKey, h.id);
@@ -900,14 +901,17 @@ function renderProductivityPanel(){
 
   return `
   <details class="routine-details" ${productivityOpen?'open':''} ontoggle="productivityOpen=this.open">
-    <summary class="routine-summary"><span>📈 Manage Productivity — ${md.label}</span><span class="arrow">▶</span></summary>
+    <summary class="routine-summary">
+      <span>📈 Manage Productivity — ${md.label} — <span style="color:${totalColor}; font-weight:800;">${total}%</span></span>
+      <span class="arrow">▶</span>
+    </summary>
     <div class="routine-body">
       <div class="panel-note" style="margin-bottom:10px;">
         Each habit's weight is how many points it contributes toward a productive day. Goal: <b>${Math.round(PRODUCTIVITY_THRESHOLD*100)}%</b> — below that, a day counts as wasted.
         These weights apply only to <b>${md.label}</b> — other months keep their own settings, and won't be changed by editing this one.
       </div>
       ${rows || '<div class="footnote">No active habits to weight.</div>'}
-      <div class="prod-total">Current total if every habit is checked: <b>${Math.min(total,100)}%</b>${total>100?' (capped at 100% per day)':''}</div>
+      <div class="prod-total">Total weight assigned: <b style="color:${totalColor};">${total}%</b>${total===100 ? ' — perfectly balanced' : (total>100 ? ' — over 100%, a full day could score higher than 100% (capped at 100 for scoring)' : " — under 100%, even a perfect day can't reach 100%")}</div>
     </div>
   </details>`;
 }
